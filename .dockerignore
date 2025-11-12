@@ -1,0 +1,7 @@
+*
+!requirements.txt
+!*.py
+!SPPE/
+!yolo/
+!models/sppe/duc_se.pth
+!models/yolo/yolov3-spp.weights

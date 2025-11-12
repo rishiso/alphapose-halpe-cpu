@@ -1,0 +1,176 @@
+# AlphaPose with Halpe 136 Full-Body Pose Estimation (CPU-Only)
+# Includes 42 hand keypoints (21 per hand), 68 face keypoints, 26 body keypoints
+
+FROM ubuntu:22.04
+
+# Avoid interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-tk \
+    git \
+    build-essential \
+    libyaml-dev \
+    libgomp1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgl1 \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /workspace
+
+# Install PyTorch CPU-only version (1.12.1 for stability)
+RUN pip3 install --no-cache-dir \
+    torch==1.12.1 \
+    torchvision==0.13.1 \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# Clone AlphaPose master branch
+RUN git clone https://github.com/MVIG-SJTU/AlphaPose.git
+
+WORKDIR /workspace/AlphaPose
+
+# Install Python dependencies
+RUN pip3 install --no-cache-dir \
+    cython \
+    "numpy<2.0" \
+    setuptools>=40.0 \
+    pyyaml \
+    easydict \
+    scipy \
+    matplotlib \
+    opencv-python \
+    visdom \
+    tqdm \
+    tensorboardx \
+    pycocotools \
+    munkres \
+    natsort \
+    timm \
+    cython-bbox
+
+# For CPU-only builds, we skip the setup.py build (which requires CUDA)
+# and use AlphaPose directly via PYTHONPATH
+# The compiled CUDA extensions are only for GPU performance optimization
+ENV PYTHONPATH="/workspace/AlphaPose:${PYTHONPATH}"
+
+# Create directories for models
+RUN mkdir -p pretrained_models detector/yolo/data detector/tracker/data
+
+# Patch RoI Align to use CPU-compatible version from torchvision
+# The CUDA version requires compilation which we skip for CPU-only builds
+RUN sed -i 's/from \. import roi_align_cuda/# from . import roi_align_cuda/g' \
+    alphapose/utils/roi_align/roi_align.py && \
+    sed -i 's/roi_align_cuda\.forward/# roi_align_cuda.forward/g' \
+    alphapose/utils/roi_align/roi_align.py
+
+# Replace roi_align implementation with torchvision's CPU-compatible version
+RUN cat > alphapose/utils/roi_align/roi_align.py << 'EOF'
+import torch
+from torch import nn
+from torchvision.ops import roi_align as tv_roi_align
+
+class RoIAlign(nn.Module):
+    def __init__(self, output_size, spatial_scale=1.0, sample_num=0):
+        super(RoIAlign, self).__init__()
+        # Handle both (height, width) tuple and single int
+        if isinstance(output_size, int):
+            self.output_size = (output_size, output_size)
+        else:
+            self.output_size = output_size
+        self.spatial_scale = spatial_scale
+        self.sample_num = sample_num if sample_num > 0 else -1
+
+    def forward(self, features, rois):
+        # torchvision expects boxes as list of tensors with (x1, y1, x2, y2)
+        # AlphaPose provides (batch_idx, x1, y1, x2, y2)
+        if rois.dim() == 2 and rois.size(1) == 5:
+            # Extract boxes and batch indices
+            batch_indices = rois[:, 0].long()
+            boxes = rois[:, 1:5]
+
+            # Group boxes by batch index
+            unique_batches = batch_indices.unique(sorted=True)
+            box_list = [boxes[batch_indices == i] for i in unique_batches]
+        else:
+            # Assume already in correct format
+            box_list = [rois]
+
+        # Use torchvision's roi_align (CPU compatible)
+        return tv_roi_align(
+            features,
+            box_list,
+            output_size=self.output_size,
+            spatial_scale=self.spatial_scale,
+            sampling_ratio=self.sample_num
+        )
+
+def roi_align(features, rois, crop_height, crop_width, spatial_scale):
+    return RoIAlign((crop_height, crop_width), spatial_scale)(features, rois)
+EOF
+
+# Patch NMS to use CPU-compatible version from torchvision
+RUN cat > detector/nms/nms_wrapper.py << 'EOF'
+import torch
+from torchvision.ops import nms as tv_nms
+
+def nms(dets, thresh):
+    """
+    NMS wrapper compatible with AlphaPose YOLO detector.
+    Args:
+        dets: tensor of shape (N, 5) with (x1, y1, x2, y2, score)
+        thresh: IoU threshold
+    Returns:
+        tuple of (scores, indices) of kept boxes
+    """
+    if dets.shape[0] == 0:
+        return torch.tensor([]), torch.tensor([], dtype=torch.long)
+
+    # Extract boxes and scores
+    boxes = dets[:, :4]  # (x1, y1, x2, y2)
+    scores = dets[:, 4]   # confidence scores
+
+    # Apply NMS using torchvision (CPU compatible)
+    keep_indices = tv_nms(boxes, scores, thresh)
+
+    # Return scores and indices of kept boxes
+    return scores[keep_indices], keep_indices
+
+def soft_nms(dets, thresh, method=2):
+    """
+    Soft NMS fallback - use regular NMS for CPU-only builds
+    """
+    return nms(dets, thresh)
+EOF
+
+# Verify AlphaPose can be imported
+RUN python3 -c "import sys; sys.path.insert(0, '/workspace/AlphaPose'); from alphapose.models import builder; print('AlphaPose imported successfully')"
+
+# Install gdown for downloading from Google Drive
+RUN pip3 install --no-cache-dir gdown
+
+# Download Halpe 136 model (Fast Pose with Symmetric Integral - best for CPU)
+RUN gdown 1_10JYI3O-VbrAiONfL36UxLf9UXMoUYA \
+    -O pretrained_models/halpe136_fast50_regression_256x192.pth \
+    || echo "Warning: Failed to download Halpe model. You may need to download it manually."
+
+# Download YOLO detector weights
+RUN gdown 1D47msNOOiJKvPOXlnpyzdKA3k6E97NTC \
+    -O detector/yolo/data/yolov3-spp.weights \
+    || echo "Warning: Failed to download YOLO weights. You may need to download it manually."
+
+# Set environment variables for CPU-only inference
+ENV OMP_NUM_THREADS=4
+ENV MKL_NUM_THREADS=4
+
+# Default command shows help
+CMD ["python3", "scripts/demo_inference.py", "--help"]
