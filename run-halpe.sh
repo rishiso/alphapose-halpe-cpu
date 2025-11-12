@@ -67,7 +67,7 @@ if [ "$MODE" = "image" ]; then
         -v "$INDIR":/workspace/input \
         -v "$OUTDIR":/workspace/output \
         alphapose-halpe-cpu \
-        python3 scripts/demo_inference.py \
+        python3 scripts/demo_3d_inference.py \
         --cfg configs/halpe_136/resnet/256x192_res50_lr1e-3_2x-regression.yaml \
         --checkpoint pretrained_models/halpe136_fast50_regression_256x192.pth \
         --gpus -1 \
@@ -80,7 +80,7 @@ elif [ "$MODE" = "video" ]; then
         -v "$INDIR":/workspace/input \
         -v "$OUTDIR":/workspace/output \
         alphapose-halpe-cpu \
-        python3 scripts/demo_inference.py \
+        python3 scripts/demo_3d_inference.py \
         --cfg configs/halpe_136/resnet/256x192_res50_lr1e-3_2x-regression.yaml \
         --checkpoint pretrained_models/halpe136_fast50_regression_256x192.pth \
         --gpus -1 \

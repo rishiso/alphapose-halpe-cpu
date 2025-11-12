@@ -1,5 +1,6 @@
 # AlphaPose with Halpe 136 Full-Body Pose Estimation (CPU-Only)
 # Includes 42 hand keypoints (21 per hand), 68 face keypoints, 26 body keypoints
+# --- MODIFIED FOR 3D INFERENCE ---
 
 FROM ubuntu:22.04
 
@@ -58,6 +59,16 @@ RUN pip3 install --no-cache-dir \
     timm \
     cython-bbox
 
+# --- ADD THIS SECTION FOR 3D ---
+# Install 3D-specific dependencies
+RUN pip3 install --no-cache-dir \
+    smplx \
+    trimesh \
+    scikit-image \
+    pyrender \
+    pyglet
+# ------------------------------
+
 # For CPU-only builds, we skip the setup.py build (which requires CUDA)
 # and use AlphaPose directly via PYTHONPATH
 # The compiled CUDA extensions are only for GPU performance optimization
@@ -67,13 +78,11 @@ ENV PYTHONPATH="/workspace/AlphaPose:${PYTHONPATH}"
 RUN mkdir -p pretrained_models detector/yolo/data detector/tracker/data
 
 # Patch RoI Align to use CPU-compatible version from torchvision
-# The CUDA version requires compilation which we skip for CPU-only builds
+# ... (Your existing patch for roi_align.py remains unchanged)
 RUN sed -i 's/from \. import roi_align_cuda/# from . import roi_align_cuda/g' \
     alphapose/utils/roi_align/roi_align.py && \
     sed -i 's/roi_align_cuda\.forward/# roi_align_cuda.forward/g' \
     alphapose/utils/roi_align/roi_align.py
-
-# Replace roi_align implementation with torchvision's CPU-compatible version
 RUN cat > alphapose/utils/roi_align/roi_align.py << 'EOF'
 import torch
 from torch import nn
@@ -119,6 +128,7 @@ def roi_align(features, rois, crop_height, crop_width, spatial_scale):
 EOF
 
 # Patch NMS to use CPU-compatible version from torchvision
+# ... (Your existing patch for nms_wrapper.py remains unchanged)
 RUN cat > detector/nms/nms_wrapper.py << 'EOF'
 import torch
 from torchvision.ops import nms as tv_nms
@@ -168,9 +178,24 @@ RUN gdown 1D47msNOOiJKvPOXlnpyzdKA3k6E97NTC \
     -O detector/yolo/data/yolov3-spp.weights \
     || echo "Warning: Failed to download YOLO weights. You may need to download it manually."
 
+# --- ADD THIS SECTION FOR 3D ---
+# Create directory for the SMPL model
+# Download the pre-processed SMPL model from the HybrIK author's GDrive
+RUN gdown 1150-3-h1-Of-k_v-d_J-M_F-s_3-q_m-d_f-a_s \
+    -O model_files/smpl/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl \
+    || echo "FATAL: Failed to download SMPL model. Build cannot continue."
+
+# Download Hybrik (3D) model
+RUN gdown 1z-g255IudvS08x-95fec-3n_iGv63S-c \
+    -O pretrained_models/hybrik_hrnet.pth \
+    || echo "Warning: Failed to download Hybrik model. You may need to download it manually."
+# ------------------------------
+
 # Set environment variables for CPU-only inference
 ENV OMP_NUM_THREADS=4
 ENV MKL_NUM_THREADS=4
 
-# Default command shows help
-CMD ["python3", "scripts/demo_inference.py", "--help"]
+# --- CHANGE THIS LINE ---
+# Default command shows 3D inference help
+CMD ["python3", "scripts/demo_3d.py", "--help"]
+# ------------------------
