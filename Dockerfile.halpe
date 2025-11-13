@@ -67,7 +67,8 @@ RUN pip3 install --no-cache-dir \
     scikit-image \
     pyrender \
     pyglet \
-    git+https://github.com/mattloper/chumpy
+    git+https://github.com/mattloper/chumpy \
+    git+https://github.com/facebookresearch/pytorch3d.git
 # ------------------------------
 
 # For CPU-only builds, we skip the setup.py build (which requires CUDA)
