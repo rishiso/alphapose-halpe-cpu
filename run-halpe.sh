@@ -1,10 +1,10 @@
 #!/bin/bash
-# Run script for AlphaPose Halpe 136 CPU-only Docker inference
+# Run script for AlphaPose 3D (Hybrik) CPU-only Docker inference
 
 set -e
 
 echo "=========================================="
-echo "AlphaPose Halpe 136 Inference (CPU)"
+echo "AlphaPose 3D (Hybrik) Inference (CPU)"
 echo "=========================================="
 echo ""
 
@@ -13,16 +13,6 @@ INDIR="${INDIR:-$(pwd)/indir}"
 OUTDIR="${OUTDIR:-$(pwd)/outdir}"
 MODE="${MODE:-image}"  # image or video
 VIDEO_FILE="${VIDEO_FILE:-video.mp4}"
-
-# Check if Docker image exists
-if ! docker image inspect alphapose-halpe-cpu &> /dev/null; then
-    echo "❌ ERROR: Docker image 'alphapose-halpe-cpu' not found."
-    echo ""
-    echo "Please build it first:"
-    echo "  ./build-halpe.sh"
-    echo ""
-    exit 1
-fi
 
 # Create directories if they don't exist
 mkdir -p "$INDIR" "$OUTDIR"
@@ -57,9 +47,10 @@ elif [ "$MODE" = "video" ]; then
 fi
 
 echo ""
-echo "Starting inference (this may take a while)..."
+echo "Starting 3D inference (this may take a while)..."
 echo ""
 
+# <<< MINIMAL CHANGE #2: Update docker command for 3D >>>
 # Run Docker container based on mode
 if [ "$MODE" = "image" ]; then
     docker run --rm \
@@ -68,8 +59,8 @@ if [ "$MODE" = "image" ]; then
         -v "$OUTDIR":/workspace/output \
         alphapose-halpe-cpu \
         python3 scripts/demo_3d_inference.py \
-        --cfg configs/halpe_136/resnet/256x192_res50_lr1e-3_2x-regression.yaml \
-        --checkpoint pretrained_models/halpe136_fast50_regression_256x192.pth \
+        --cfg configs/smpl/256x192_adam_lr1e-3-res34_smpl_24_3d_base_2x_mix.yaml \
+        --checkpoint pretrained_models/hybrik_hrnet.pth \
         --gpus -1 \
         --indir /workspace/input \
         --outdir /workspace/output \
@@ -81,8 +72,8 @@ elif [ "$MODE" = "video" ]; then
         -v "$OUTDIR":/workspace/output \
         alphapose-halpe-cpu \
         python3 scripts/demo_3d_inference.py \
-        --cfg configs/halpe_136/resnet/256x192_res50_lr1e-3_2x-regression.yaml \
-        --checkpoint pretrained_models/halpe136_fast50_regression_256x192.pth \
+        --cfg configs/smpl/256x192_adam_lr1e-3-res34_smpl_24_3d_base_2x_mix.yaml \
+        --checkpoint pretrained_models/hybrik_hrnet.pth \
         --gpus -1 \
         --video /workspace/input/"$VIDEO_FILE" \
         --outdir /workspace/output \
@@ -94,21 +85,15 @@ fi
 
 echo ""
 echo "=========================================="
-echo "✓ Processing complete!"
+echo "✓ 3D Processing complete!"
 echo "=========================================="
 echo ""
 echo "Results saved to: $OUTDIR"
 echo ""
+# <<< MINIMAL CHANGE #3: Update output description >>>
 echo "Output includes:"
-echo "  - Rendered images/video with 136 keypoints visualized"
-echo "  - alphapose-results.json with detailed keypoint data"
-echo ""
-echo "Keypoint breakdown:"
-echo "  - Body: 26 keypoints"
-echo "  - Face: 68 keypoints"
-echo "  - Left Hand: 21 keypoints"
-echo "  - Right Hand: 21 keypoints"
-echo "  - Total: 136 keypoints"
+echo "  - Rendered images/video with 3D skeleton/mesh"
+echo "  - alphapose-results.json with 3D joint coordinates (pred_xyz_jts_24) and SMPL parameters"
 echo ""
 
 # Usage examples
@@ -116,13 +101,13 @@ cat << 'EOF'
 Usage Examples:
 
   # Process images (default)
-  ./run-halpe.sh
+  ./run-3d.sh
 
   # Process video
-  MODE=video VIDEO_FILE=myvideo.mp4 ./run-halpe.sh
+  MODE=video VIDEO_FILE=myvideo.mp4 ./run-3d.sh
 
   # Custom directories
-  INDIR=/path/to/images OUTDIR=/path/to/output ./run-halpe.sh
+  INDIR=/path/to/images OUTDIR=/path/to/output ./run-3d.sh
 
-See DOCKER-HALPE.md for more advanced usage options.
+See DOCKER-3D.md for more advanced usage options.
 EOF
